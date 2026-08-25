@@ -1280,6 +1280,13 @@ def init_agent(
     
     # SQLite session store (optional -- provided by CLI or gateway)
     agent._session_db = session_db
+    # SessionDB ownership is explicit. Entry points normally lend a long-lived
+    # handle to an agent and remain responsible for closing it. Agents that
+    # open their own handle (lazy recall or detached delegation) flip this flag
+    # and close exactly that handle from AIAgent.close().  _session_db_closed
+    # prevents a deliberately closed agent from silently reopening state.db.
+    agent._owns_session_db = False
+    agent._session_db_closed = False
     agent._parent_session_id = parent_session_id
     agent._last_flushed_db_idx = 0  # tracks DB-write cursor to prevent duplicate writes
     agent._session_db_created = False  # DB row deferred to run_conversation()

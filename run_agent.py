@@ -576,12 +576,18 @@ class AIAgent:
         # degrades to None for them (they don't use session_search anyway).
         if getattr(self, "_persist_disabled", False):
             return None
+        # close() is a terminal lifecycle boundary.  An agent that owned and
+        # deliberately closed its SessionDB must never resurrect persistence
+        # by reaching the lazy recall path afterward.
+        if getattr(self, "_session_db_closed", False):
+            return None
         if self._session_db is not None:
             return self._session_db
         try:
             from hermes_state import SessionDB
 
             self._session_db = SessionDB()
+            self._owns_session_db = True
             return self._session_db
         except Exception as exc:
             logger.debug("SessionDB unavailable for recall", exc_info=True)
@@ -3542,6 +3548,23 @@ class AIAgent:
                     session_db.end_session(session_id, "agent_close")
         except Exception:
             pass
+
+        # 8. Release an explicitly owned SessionDB handle.  Most entry points
+        # lend their DB to AIAgent and close it themselves, so borrowed handles
+        # are intentionally untouched. Detached subagents receive independent
+        # owned connections because they may outlive a cron/oneshot parent;
+        # closing the parent's borrowed connection must not invalidate them.
+        if getattr(self, "_owns_session_db", False):
+            session_db = getattr(self, "_session_db", None)
+            try:
+                if session_db is not None:
+                    session_db.close()
+            except Exception:
+                pass
+            finally:
+                self._session_db = None
+                self._owns_session_db = False
+                self._session_db_closed = True
 
     def _hydrate_todo_store(self, history: List[Dict[str, Any]]) -> None:
         """

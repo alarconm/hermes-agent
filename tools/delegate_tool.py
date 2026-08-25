@@ -1041,6 +1041,29 @@ def _inherit_parent_base_url(parent_agent, fallback_base_url: Optional[str]) -> 
     return fallback_base_url or None
 
 
+def _open_owned_child_session_db(parent_agent):
+    """Open an independent SessionDB connection for a delegated child.
+
+    Delegated children can detach from their parent turn. Returning the
+    parent's handle here would make the child borrow a lifetime it cannot
+    observe, so failure degrades to no persistence instead of unsafe sharing.
+    """
+    parent_session_db = getattr(parent_agent, "_session_db", None)
+    if parent_session_db is None:
+        return None
+    try:
+        from hermes_state import SessionDB
+
+        return SessionDB(db_path=getattr(parent_session_db, "db_path", None))
+    except Exception as exc:
+        logger.warning(
+            "Delegated child SessionDB unavailable; running without session "
+            "persistence: %s",
+            exc,
+        )
+        return None
+
+
 def _build_child_agent(
     task_index: int,
     goal: str,
@@ -1298,38 +1321,56 @@ def _build_child_agent(
         # openrouter/pareto-code), so we keep it inherited even when the
         # provider is overridden — it's a no-op on any other model.
 
-    child = AIAgent(
-        base_url=effective_base_url,
-        api_key=effective_api_key,
-        model=effective_model,
-        provider=effective_provider,
-        api_mode=effective_api_mode,
-        acp_command=effective_acp_command,
-        acp_args=effective_acp_args,
-        max_iterations=max_iterations,
-        max_tokens=getattr(parent_agent, "max_tokens", None),
-        reasoning_config=child_reasoning,
-        prefill_messages=getattr(parent_agent, "prefill_messages", None),
-        fallback_model=parent_fallback,
-        enabled_toolsets=child_toolsets,
-        quiet_mode=True,
-        ephemeral_system_prompt=child_prompt,
-        log_prefix=f"[subagent-{task_index}]",
-        platform="subagent",
-        skip_context_files=True,
-        skip_memory=True,
-        clarify_callback=None,
-        thinking_callback=child_thinking_cb,
-        session_db=getattr(parent_agent, "_session_db", None),
-        parent_session_id=getattr(parent_agent, "session_id", None),
-        providers_allowed=child_providers_allowed,
-        providers_ignored=child_providers_ignored,
-        providers_order=child_providers_order,
-        provider_sort=child_provider_sort,
-        openrouter_min_coding_score=child_openrouter_min_coding_score,
-        tool_progress_callback=child_progress_cb,
-        iteration_budget=None,  # fresh budget per subagent
-    )
+    # A detached child can outlive its parent turn. This is especially common
+    # for in-process cron jobs: run_job() owns and closes its SessionDB as soon
+    # as the parent returns, while background=true children keep running on the
+    # async delegation pool. Borrowing that connection produced the live
+    # ``'NoneType' object has no attribute 'execute'`` append failures.
+    #
+    # Give every delegated child an independent connection to the same DB.
+    # AIAgent.close() owns and closes it, making synchronous and detached child
+    # lifetimes identical and eliminating a timing-dependent ownership mode.
+    child_session_db = _open_owned_child_session_db(parent_agent)
+    child_owns_session_db = child_session_db is not None
+
+    try:
+        child = AIAgent(
+            base_url=effective_base_url,
+            api_key=effective_api_key,
+            model=effective_model,
+            provider=effective_provider,
+            api_mode=effective_api_mode,
+            acp_command=effective_acp_command,
+            acp_args=effective_acp_args,
+            max_iterations=max_iterations,
+            max_tokens=getattr(parent_agent, "max_tokens", None),
+            reasoning_config=child_reasoning,
+            prefill_messages=getattr(parent_agent, "prefill_messages", None),
+            fallback_model=parent_fallback,
+            enabled_toolsets=child_toolsets,
+            quiet_mode=True,
+            ephemeral_system_prompt=child_prompt,
+            log_prefix=f"[subagent-{task_index}]",
+            platform="subagent",
+            skip_context_files=True,
+            skip_memory=True,
+            clarify_callback=None,
+            thinking_callback=child_thinking_cb,
+            session_db=child_session_db,
+            parent_session_id=getattr(parent_agent, "session_id", None),
+            providers_allowed=child_providers_allowed,
+            providers_ignored=child_providers_ignored,
+            providers_order=child_providers_order,
+            provider_sort=child_provider_sort,
+            openrouter_min_coding_score=child_openrouter_min_coding_score,
+            tool_progress_callback=child_progress_cb,
+            iteration_budget=None,  # fresh budget per subagent
+        )
+    except BaseException:
+        if child_owns_session_db and child_session_db is not None:
+            child_session_db.close()
+        raise
+    child._owns_session_db = child_owns_session_db
     child._print_fn = getattr(parent_agent, "_print_fn", None)
     # Now the child exists, its session id can ride on every relayed event
     # (including the spawn_requested below — first emit happens after this).
