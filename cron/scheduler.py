@@ -2967,8 +2967,25 @@ def run_job(
         # Back-compat: an axis with no snapshot (pre-existing jobs, no_agent, or
         # any axis whose creation-time resolution failed) behaves exactly as
         # before — the guard never engages for it. Pinned axes are unaffected.
+        # Config gate for the guard below. Owner can turn the skip off with
+        # ``cron.drift_guard: false`` in config.yaml (or the
+        # ``HERMES_CRON_DRIFT_GUARD`` env override) so unpinned jobs simply
+        # follow the current global inference config. Default: enabled, which
+        # preserves upstream fail-closed behaviour.
+        _cron_cfg = _cfg.get("cron") if isinstance(_cfg, dict) else None
+        _falsey = ("0", "false", "no", "off")
+        _drift_guard_on = True
+        if os.getenv("HERMES_CRON_DRIFT_GUARD", "").strip().lower() in _falsey:
+            _drift_guard_on = False
+        if isinstance(_cron_cfg, dict) and str(
+            _cron_cfg.get("drift_guard", True)
+        ).strip().lower() in _falsey:
+            _drift_guard_on = False
+
         _drift: list[str] = []
-        _provider_snapshot = (job.get("provider_snapshot") or "").strip().lower()
+        _provider_snapshot = (
+            (job.get("provider_snapshot") or "") if _drift_guard_on else ""
+        ).strip().lower()
         if _provider_snapshot and not (job.get("provider") or "").strip():
             _current_provider = str(runtime.get("provider") or "").strip().lower()
             if _current_provider and _current_provider != _provider_snapshot:
