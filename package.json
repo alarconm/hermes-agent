@@ -38,9 +38,17 @@
   "overrides": {
     "lodash": "4.18.1",
     "@assistant-ui/store": "0.2.13",
-    "yauzl": "^3.3.1"
+    "yauzl": "^3.3.1",
+    "katex": "0.18.2",
+    "brace-expansion@1": "1.1.21",
+    "brace-expansion@2": "2.1.7",
+    "brace-expansion@5": "5.0.12",
+    "@tailwindcss/typography@0.5.20": {
+      "postcss-selector-parser": "7.1.6"
+    },
+    "@electron/get": "5.1.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   }
 }

@@ -15,6 +15,13 @@
     "qs": "^6.16.0"
   },
   "overrides": {
-    "protobufjs": "^7.5.5"
+    "protobufjs": "^7.5.5",
+    "@whiskeysockets/baileys": {
+      "music-metadata": "^11.16.0"
+    },
+    "express": {
+      "proxy-addr": "2.0.8"
+    },
+    "sharp": "0.35.5"
   }
 }
